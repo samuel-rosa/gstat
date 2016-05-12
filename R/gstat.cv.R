@@ -2,7 +2,9 @@
 
 "gstat.cv" <-
   function (object, nfold = nrow(object$data[[1]]$data), remove.all = FALSE, verbose = interactive(), 
-            all.residuals = FALSE, ...) {
+            all.residuals = FALSE, 
+            refit = FALSE, # ASR: added option 'refit'
+            ...) {
     
     if (!inherits(object, "gstat")) 
       stop("first argument should be of class gstat")
@@ -92,9 +94,45 @@
       }
       
       # asr: this is where the re-fit of the variogram comes in!!!
+      if (refit) {
+        # get fitted models
+        data_names <- names(object$data)
+        fitted_models <- object$model[data_names]
+        
+        # create gstat object
+        for (v in 1:length(object$data)) {
+          if (v == 1) {
+            g <- gstat(
+              g = NULL, id = data_names[v], data = object$data[[v]]$data, formula = object$data[[v]]$formula)
+          } else {
+            g <- gstat(
+              g = g, id = data_names[v], data = object$data[[v]]$data, formula = object$data[[v]]$formula)
+          }
+        }
+        
+        # Define initial models
+        g$model <- object$model
+        
+        # Compute empirical direct and cross-variograms
+        # How do we get arguments to be passed to 'variogram'?
+        # v <- variogram(g, boundaries = attr(vario, "boundaries"))
+        v <- variogram(g, boundaries = attr(vario, "boundaries"))
+        
+        # Re-fit variograms
+        if (length(object$data) > 1) {
+          m <- fit.lmc(v = v, g = g, correct.diagonal = 1.01)
+        } else {
+          m <- NA
+        }
+        
+      }
       
       # asr: make predictions at test locations using the object reformulated above
-      x <- predict(object, newdata = data[sel, ], ...)
+      if (refit) {
+        x <- predict(m, newdata = data[sel, ], ...)
+      } else {
+        x <- predict(object, newdata = data[sel, ], ...)
+      }
       
       # asr: get residuals of the test set
       if (all.residuals) {
