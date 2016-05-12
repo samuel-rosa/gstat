@@ -6,7 +6,7 @@ function(object, locations, X, cutoff, width = cutoff/15.0, alpha = 0,
     cressie = FALSE, dX = numeric(0), boundaries = numeric(0), 
     cloud = FALSE, trend.beta = NULL, debug.level = 1, cross = TRUE, 
 	grid, map = FALSE, g = NULL, ..., projected = TRUE, lambda = 1.0,
-	verbose = FALSE, covariogram = FALSE, PR = FALSE, pseudo = -1) 
+	verbose = FALSE, covariogram = FALSE, PR = FALSE, pseudo = -1)
 {
 	dots = list(...)
 	if (length(dots) > 0) {

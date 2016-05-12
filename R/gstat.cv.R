@@ -3,7 +3,8 @@
 "gstat.cv" <-
   function (object, nfold = nrow(object$data[[1]]$data), remove.all = FALSE, verbose = interactive(), 
             all.residuals = FALSE, 
-            refit = FALSE, # ASR: added option 'refit'
+            # New arguments to re-fit the variogram model
+            refit = FALSE, # should the variogram model be re-fitted?
             ...) {
     
     if (!inherits(object, "gstat")) 
@@ -11,30 +12,28 @@
     
     # ASR: Select first list of data/model, get model frame, and get model formula
     var1 <- object$data[[1]]
-    data <- var1$data
+    data <- var1$data # keep the original data
     formula <- var1$formula
     
+    # Create object to store cross-validation results
     if (all.residuals) {
-      # ASR: Get number of variables and create data.frame to store the residuals of all variables
       nc <- length(object$data)
       ret <- data.frame(matrix(NA, nrow(data), nc))
     } else {
-      
-      # ASR: Create SpatialPointsDataFrame to store the residuals of the first variable
       cc <- coordinates(data)
       rownames(cc) <- NULL
       df <- data.frame(matrix(as.numeric(NA), nrow(data), 2))
       ret <- SpatialPointsDataFrame(cc, df)
     }
     
-    # ASR: Define the number of folds
+    # Define cross-validation folds
     if (missing(nfold)) 
-      nfold <- 1:nrow(data)                             # ASR: loo-cv
+      nfold <- 1:nrow(data)
     if (length(nfold) == nrow(data))
-      fold <- nfold                                     # ASR: loo-cv
+      fold <- nfold
     else if (nfold < nrow(data)) 
-      fold <- sample(nfold, nrow(data), replace = TRUE) # k-fold cv
-    else fold <- 1:nrow(data)                           # ASR: loo-cv
+      fold <- sample(nfold, nrow(data), replace = TRUE)
+    else fold <- 1:nrow(data)
     
     # ASR: Check if the residuals of all variables should be returned or 
     #      if the test points should be removed from all variables and there are more than one variable.
@@ -45,61 +44,48 @@
         all.data[[v]] <- object$data[[v]]$data
     }
     
-    # ASR: Print status
     if (verbose)
       pb <- txtProgressBar(1, length(unique(fold)), style=3)
     
-    # ASR: Start main loop
-    # 
-    # ASR: Check how many folds we have
+    # Cross-validation loop
     for (i in sort(unique(fold))) {
       if (verbose)
         setTxtProgressBar(pb, i)
-      
-      # ASR: Identify test observations
-      sel <- which(fold == i)
-      
-      # ASR: Select calibration observations
-      object$data[[1]]$data <- data[-sel, ]
+      sel <- which(fold == i)               # test observations
+      object$data[[1]]$data <- data[-sel, ] # calibration observations
       
       # ASR: Check if the test points should be removed from all variables and there are more than one 
       #      variable.
       #      If TRUE, reformulate the model frame in the data object.
       if (remove.all && length(object$data) > 1) {
         
-        # ASR: Reformulate the model frame in the data object. Skip the first because it was reformulated 
-        #      above (default).
+        # Reformulate model frames (skip the first because it was reformulated above).
         for (v in 2:length(object$data)) {
           varv <- object$data[[v]]
-          varv$data <- all.data[[v]] # ASR: I THINK THIS LINE IS UNECESSARY BECAUSE IT SEEMS TO REPEAT
-          #                                 THE LINE ABOVE!
-
+          varv$data <- all.data[[v]]
           #atv = gstat.formula(varv$formula, varv$data)$locations
           #at1 = gstat.formula(formula, data[sel, ])$locations
-          
-          atv <- coordinates(varv$data)  # asr: get coordinates of all observations
-          at1 <- coordinates(data[sel,]) # asr: get coordinates of selected test observations
-          cc <- rbind(atv, at1)          # asr: stack coordinates
+          atv <- coordinates(varv$data)
+          at1 <- coordinates(data[sel,])
+          cc <- rbind(atv, at1)
           rownames(cc) <- NULL # as there will be duplicates
-          all <- SpatialPoints(cc)       # asr: create spatial points
-          zd <- zerodist(all)            # asr: identify duplicates
-          skip <- zd[, 1]                # ASR: I THINK 'skip' IS EXACTLY EQUAL TO 'sel'.
-          object$data[[v]]$data <- varv$data[-skip, ] # asr: keep non-duplicated points for calibration
-          
-          # ASR: Perhaps the previous lines of code could be replaced with:
-          # varv <- object$data[[v]]
-          # object$data[[v]]$data <- varv$data[-sel, ]
-          # However, the code seems to be optimized to deal with non-collocated cokriging.
+          all <- SpatialPoints(cc)
+          zd <- zerodist(all)
+          skip <- zd[, 1]
+          object$data[[v]]$data <- varv$data[-skip, ]
         }
       }
       
-      # asr: this is where the re-fit of the variogram comes in!!!
+      # Re-fit variogram models when needed.
+      # NOTE: This is working only for multivariate variogram models.
       if (refit) {
-        # get fitted models
+        
+        # Start getting the fitted variogram models that will be used as 
+        # initial values when re-fitting the variogram models.
         data_names <- names(object$data)
         fitted_models <- object$model[data_names]
         
-        # create gstat object
+        # Create new gstat object with initial values for variogram models
         for (v in 1:length(object$data)) {
           if (v == 1) {
             g <- gstat(
@@ -109,27 +95,28 @@
               g = g, id = data_names[v], data = object$data[[v]]$data, formula = object$data[[v]]$formula)
           }
         }
-        
-        # Define initial models
         g$model <- object$model
         
-        # Compute empirical direct and cross-variograms
-        # How do we get arguments to be passed to 'variogram'?
-        # v <- variogram(g, boundaries = attr(vario, "boundaries"))
+        # Compute empirical variograms
+        # How do we get arguments to be passed to 'variogram'? I think we have to create new arguments or use
+        # a 'control' function, something like 'refit.control'.
         v <- variogram(g, boundaries = attr(vario, "boundaries"))
         
-        # Re-fit variograms
+        # Re-fit the variogram models:
+        # - 'fit.lmc' is used to fit multivariate variogram models
+        # - 'fit.variogram' is used to fit univariate variogram models
         if (length(object$data) > 1) {
-          m <- fit.lmc(v = v, g = g, correct.diagonal = 1.01)
+          object_refit <- fit.lmc(v = v, g = g, correct.diagonal = 1.01)
         } else {
-          m <- NA
+          # object_refit <- fit.variogram(object = v, ...)
         }
         
       }
       
-      # asr: make predictions at test locations using the object reformulated above
+      # ASR: Here we make predictions at the test locations ('sel') using the
+      #      (1) reformulated and re-fited or (2) reformulated model object.
       if (refit) {
-        x <- predict(m, newdata = data[sel, ], ...)
+        x <- predict(object_refit, newdata = data[sel, ], ...)
       } else {
         x <- predict(object, newdata = data[sel, ], ...)
       }
